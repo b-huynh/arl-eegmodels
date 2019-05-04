@@ -86,43 +86,81 @@ from sklearn.linear_model import LogisticRegression
 # tools for plotting confusion matrices
 from matplotlib import pyplot as plt
 
+# For shuffling training set
+import random
+
 
 ##################### Process, filter and epoch the data ######################
-data_path = sample.data_path()
+# data_path = sample.data_path()
 
-# Set parameters and read data
-raw_fname = data_path + '/MEG/sample/sample_audvis_filt-0-40_raw.fif'
-event_fname = data_path + '/MEG/sample/sample_audvis_filt-0-40_raw-eve.fif'
-tmin, tmax = -0., 1
-event_id = dict(aud_l=1, aud_r=2, vis_l=3, vis_r=4)
+# # Set parameters and read data
+# raw_fname = data_path + '/MEG/sample/sample_audvis_filt-0-40_raw.fif'
+# event_fname = data_path + '/MEG/sample/sample_audvis_filt-0-40_raw-eve.fif'
+# tmin, tmax = -0., 1
+# event_id = dict(aud_l=1, aud_r=2, vis_l=3, vis_r=4)
 
-# Setup for reading the raw data
-raw = io.Raw(raw_fname, preload=True, verbose=False)
-raw.filter(2, None, method='iir')  # replace baselining with high-pass
-events = mne.read_events(event_fname)
+# # Setup for reading the raw data
+# raw = io.Raw(raw_fname, preload=True, verbose=False)
+# raw.filter(2, None, method='iir')  # replace baselining with high-pass
+# events = mne.read_events(event_fname)
 
-raw.info['bads'] = ['MEG 2443']  # set bad channels
-picks = mne.pick_types(raw.info, meg=False, eeg=True, stim=False, eog=False,
-                       exclude='bads')
+# raw.info['bads'] = ['MEG 2443']  # set bad channels
+# picks = mne.pick_types(raw.info, meg=False, eeg=True, stim=False, eog=False,
+#                        exclude='bads')
 
-# Read epochs
-epochs = mne.Epochs(raw, events, event_id, tmin, tmax, proj=False,
-                    picks=picks, baseline=None, preload=True, verbose=False)
-labels = epochs.events[:, -1]
+# # Read epochs
+# epochs = mne.Epochs(raw, events, event_id, tmin, tmax, proj=False,
+#                     picks=picks, baseline=None, preload=True, verbose=False)
+# labels = epochs.events[:, -1]
 
-# extract raw data. scale by 1000 due to scaling sensitivity in deep learning
-X = epochs.get_data()*1000 # format is in (trials, channels, samples)
-y = labels
+# # extract raw data. scale by 1000 due to scaling sensitivity in deep learning
+# X = epochs.get_data()*1000 # format is in (trials, channels, samples)
+# y = labels
 
-kernels, chans, samples = 1, 60, 151
+# Load Tom's Data
+# 28764 Trials
+print("Loading train data...")
+bike_train_path = '/home/bhuynh/Projects/icmi_bci/data/cross.subj.train.npy'
+train_raw = np.load(bike_train_path, allow_pickle=True).item()
+# X = np.float64(train_raw['X'])
+# y = np.int64(train_raw['y'])
 
-# take 50/25/25 percent of the data to train/validate/test
-X_train      = X[0:144,]
-Y_train      = y[0:144]
-X_validate   = X[144:216,]
-Y_validate   = y[144:216]
-X_test       = X[216:,]
-Y_test       = y[216:]
+# Shuffle...
+print("Shuffling...")
+td = list(zip(train_raw['X'], train_raw['y']))
+random.shuffle(td)
+X, y = zip(*td)
+X = np.float64(X) * 1000.0
+y = np.int64(y) + 1 # Class labels start from 1, not 0
+
+print("Splitting...")
+# Generate Validation set, also 7192 Trials. 28764 - 7192 = 21572
+X_train     = X[0:21572,]
+Y_train     = y[0:21572]
+X_validate  = X[21572:,]
+Y_validate  = y[21572:]
+
+
+print("Loading test data...")
+# Test set has 7192 Trials
+bike_test_path = '/home/bhuynh/Projects/icmi_bci/data/cross.subj.test.npy'
+test_raw = np.load(bike_test_path, allow_pickle=True).item()
+X_test = np.float64(test_raw['X']) * 1000.0
+Y_test = np.int64(test_raw['y']) + 1 # Class labels start from 1, not 0
+
+
+# kernels, chans, samples = 1, 60, 151
+kernels, chans, samples = 1, 40, 358    # Tom's data has 40 channels and 358 samples
+
+
+
+# # take 50/25/25 percent of the data to train/validate/test
+# X_train      = X[0:144,]
+# Y_train      = y[0:144]
+# X_validate   = X[144:216,]
+# Y_validate   = y[144:216]
+# X_test       = X[216:,]
+# Y_test       = y[216:]
 
 ############################# EEGNet portion ##################################
 
@@ -136,23 +174,29 @@ Y_test       = np_utils.to_categorical(Y_test-1)
 X_train      = X_train.reshape(X_train.shape[0], kernels, chans, samples)
 X_validate   = X_validate.reshape(X_validate.shape[0], kernels, chans, samples)
 X_test       = X_test.reshape(X_test.shape[0], kernels, chans, samples)
-   
-print('X_train shape:', X_train.shape)
+
 print(X_train.shape[0], 'train samples')
 print(X_test.shape[0], 'test samples')
 
 # configure the EEGNet-8,2,16 model with kernel length of 32 samples (other 
 # model configurations may do better, but this is a good starting point)
-model = EEGNet(nb_classes = 4, Chans = chans, Samples = samples, 
-               dropoutRate = 0.5, kernLength = 32, F1 = 8, D = 2, F2 = 16, 
+# model = EEGNet(nb_classes = 4, Chans = chans, Samples = samples, 
+#                dropoutRate = 0.5, kernLength = 32, F1 = 8, D = 2, F2 = 16, 
+#                dropoutType = 'Dropout')
+
+# Model for Tom's Data
+model = EEGNet(nb_classes = 3, Chans = chans, Samples = samples, 
+               dropoutRate = 0.25, kernLength = 64, F1 = 8, D = 2, F2 = 16, 
                dropoutType = 'Dropout')
+
 
 # compile the model and set the optimizers
 model.compile(loss='categorical_crossentropy', optimizer='adam', 
               metrics = ['accuracy'])
 
 # count number of parameters in the model
-numParams    = model.count_params()    
+numParams    = model.count_params()
+print("Num Params: {}".format(numParams))
 
 # set a valid path for your system to record model checkpoints
 checkpointer = ModelCheckpoint(filepath='/tmp/checkpoint.h5', verbose=1,
@@ -167,7 +211,9 @@ checkpointer = ModelCheckpoint(filepath='/tmp/checkpoint.h5', verbose=1,
 
 # the syntax is {class_1:weight_1, class_2:weight_2,...}. Here just setting
 # the weights all to be 1
-class_weights = {0:1, 1:1, 2:1, 3:1}
+# class_weights = {0:1, 1:1, 2:1, 3:1}
+# 0: Target, 1: Distractor, 2: Standard
+class_weights = {0:8, 1:8, 2:1}
 
 ################################################################################
 # fit the model. Due to very small sample sizes this can get
@@ -197,43 +243,43 @@ model.load_weights('/tmp/checkpoint.h5')
 probs       = model.predict(X_test)
 preds       = probs.argmax(axis = -1)  
 acc         = np.mean(preds == Y_test.argmax(axis=-1))
-print("Classification accuracy: %f " % (acc))
+print("\n  EEGNet Classification accuracy: %f  \n" % (acc))
 
 
-############################# PyRiemann Portion ##############################
+# ############################# PyRiemann Portion ##############################
 
-# code is taken from PyRiemann's ERP sample script, which is decoding in 
-# the tangent space with a logistic regression
+# # code is taken from PyRiemann's ERP sample script, which is decoding in 
+# # the tangent space with a logistic regression
 
-n_components = 2  # pick some components
+# n_components = 2  # pick some components
 
-# set up sklearn pipeline
-clf = make_pipeline(XdawnCovariances(n_components),
-                    TangentSpace(metric='riemann'),
-                    LogisticRegression())
+# # set up sklearn pipeline
+# clf = make_pipeline(XdawnCovariances(n_components),
+#                     TangentSpace(metric='riemann'),
+#                     LogisticRegression())
 
-preds_rg     = np.zeros(len(Y_test))
+# preds_rg     = np.zeros(len(Y_test))
 
-# reshape back to (trials, channels, samples)
-X_train      = X_train.reshape(X_train.shape[0], chans, samples)
-X_test       = X_test.reshape(X_test.shape[0], chans, samples)
+# # reshape back to (trials, channels, samples)
+# X_train      = X_train.reshape(X_train.shape[0], chans, samples)
+# X_test       = X_test.reshape(X_test.shape[0], chans, samples)
 
-# train a classifier with xDAWN spatial filtering + Riemannian Geometry (RG)
-# labels need to be back in single-column format
-clf.fit(X_train, Y_train.argmax(axis = -1))
-preds_rg     = clf.predict(X_test)
+# # train a classifier with xDAWN spatial filtering + Riemannian Geometry (RG)
+# # labels need to be back in single-column format
+# clf.fit(X_train, Y_train.argmax(axis = -1))
+# preds_rg     = clf.predict(X_test)
 
-# Printing the results
-acc2         = np.mean(preds_rg == Y_test.argmax(axis = -1))
-print("Classification accuracy: %f " % (acc2))
+# # Printing the results
+# acc2         = np.mean(preds_rg == Y_test.argmax(axis = -1))
+# print("\n  xDawn+RG Classification accuracy: %f  \n" % (acc2))
 
-# plot the confusion matrices for both classifiers
-names        = ['audio left', 'audio right', 'vis left', 'vis right']
-plt.figure(0)
-plot_confusion_matrix(preds, Y_test.argmax(axis = -1), names, title = 'EEGNet-8,2')
+# # plot the confusion matrices for both classifiers
+# names        = ['audio left', 'audio right', 'vis left', 'vis right']
+# plt.figure(0)
+# plot_confusion_matrix(preds, Y_test.argmax(axis = -1), names, title = 'EEGNet-8,2')
 
-plt.figure(1)
-plot_confusion_matrix(preds_rg, Y_test.argmax(axis = -1), names, title = 'xDAWN + RG')
+# plt.figure(1)
+# plot_confusion_matrix(preds_rg, Y_test.argmax(axis = -1), names, title = 'xDAWN + RG')
 
 
 
